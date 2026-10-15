@@ -24,39 +24,73 @@ final http:Client adminClient = check new (adminService);
 final http:Client deliveryClient = check new (deliveryService);
 final http:Client restaurantClient = check new (restaurantService);
 
+// First path segment after /api -> [downstream client, base path on that service].
+// Singular aliases are accepted so /api/order/... and /api/orders/... both work.
+function route(string segment) returns [http:Client, string]? {
+    match segment {
+        "orders"|"order" => {
+            return [orderClient, "/orders"];
+        }
+        "customers"|"customer" => {
+            return [customerClient, "/customers"];
+        }
+        "restaurants"|"restaurant" => {
+            return [restaurantClient, "/restaurants"];
+        }
+        "payments"|"payment" => {
+            return [paymentClient, "/payments"];
+        }
+        "delivery"|"deliveries" => {
+            return [deliveryClient, "/delivery"];
+        }
+        "notifications"|"notification" => {
+            return [notificationClient, "/notifications"];
+        }
+        "admin" => {
+            return [adminClient, "/admin"];
+        }
+    }
+    return ();
+}
+
+function errorResponse(int status, string message) returns http:Response {
+    http:Response res = new;
+    res.statusCode = status;
+    res.setJsonPayload({message});
+    return res;
+}
+
+@http:ServiceConfig {
+    cors: {
+        allowOrigins: ["*"],
+        allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allowHeaders: ["*"]
+    }
+}
 service /api on new http:Listener(port) {
 
     resource function get health() returns json {
         return {status: "UP", 'service: "gateway"};
     }
 
-    // These resources functions are used for reverse proxying the requests to the respective services. 
-    // The path of the request is used to determine which service to forward the request to.
-    resource function get orders/[string id]() returns json|error {
-        return orderClient->get(string `/order/${id}`);
-    }
+    // Reverse proxy: /api/{service}/{rest...}?{query} -> {service base path}/{rest...}?{query},
+    // for every HTTP method, passing status codes and bodies straight through.
+    resource function 'default [string... path](http:Request req) returns http:Response {
+        if path.length() == 0 {
+            return errorResponse(404, "Unknown route. Try /api/orders, /api/restaurants, /api/customers ...");
+        }
+        [http:Client, string]? target = route(path[0]);
+        if target is () {
+            return errorResponse(404, string `No service handles '/api/${path[0]}'`);
+        }
+        var [downstream, basePath] = target;
 
-    resource function get customer/[string id]() returns json|error {
-        return customerClient->get(string `/customer/${id}`);
-    }
-
-    resource function get notifications/[string id]() returns json|error {
-        return notificationClient->get(string `/notification/${id}`);
-    }
-
-    resource function get payments/[string id]() returns json|error {
-        return paymentClient->get(string `/payment/${id}`);
-    }
-
-    resource function get admin/[string id]() returns json|error {
-        return adminClient->get(string `/admin/${id}`);
-    }
-
-    resource function get delivery/[string id]() returns json|error {
-        return deliveryClient->get(string `/delivery/${id}`);
-    }
-
-    resource function get restaurant/[string id]() returns json|error {
-        return restaurantClient->get(string `/restaurant/${id}`);
+        // Everything after "/api/{segment}" in the raw path, including any query string.
+        string rest = req.rawPath.substring(("/api/" + path[0]).length());
+        http:Response|error res = downstream->forward(basePath + rest, req);
+        if res is error {
+            return errorResponse(502, string `${path[0]} service unavailable: ${res.message()}`);
+        }
+        return res;
     }
 }

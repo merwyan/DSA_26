@@ -2,7 +2,7 @@
 org = "wykva"
 name = "restaurantService"
 version = "0.1.0"
-distribution = "2201.13.4"
+distribution = "2201.12.9"
 
 [build-options]
 observabilityIncluded = true

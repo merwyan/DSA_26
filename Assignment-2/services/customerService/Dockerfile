@@ -1,10 +1,13 @@
-FROM ballerina/ballerina:2201.13.5 AS build
+FROM ballerina/ballerina:2201.12.9
+# Build outside /home/ballerina: the base image declares it a VOLUME, so Compose would
+# keep serving the old jar from that volume after a rebuild.
+USER root
+RUN mkdir -p /app && chown ballerina /app
+USER ballerina
 WORKDIR /app
-COPY . .
-RUN bal build --offline=false
-
-FROM eclipse-temurin:21-jre-jammy
-WORKDIR /app
-COPY --from=build /app/target/bin/*.jar app.jar
+COPY --chown=ballerina Ballerina.toml Dependencies.toml ./
+COPY --chown=ballerina *.bal ./
+RUN bal build
 EXPOSE 9090
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# Settings (port, MongoDB, Kafka) come from the BAL_CONFIG_DATA environment variable.
+CMD ["java", "-jar", "target/bin/customerService.jar"]
